@@ -63,8 +63,18 @@
         </div>
 
         <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-            <div class="text-center py-10 text-[#949ba4]">
-                <p>Connecting to servers...</p>
+            <!-- System Welcome Message -->
+            <div class="flex space-x-4 px-4 py-2">
+                <div class="w-10 h-10 rounded-full bg-[#5865f2] flex items-center justify-center text-white">
+                    <i data-lucide="bot" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="font-bold text-[#5865f2]">System</span>
+                        <span class="text-[10px] text-[#949ba4]">Welcome Bot</span>
+                    </div>
+                    <div class="text-[#dbdee1]">Welcome to the Breaking RBLX Chat! Since we aren't using a database, messages will stay as long as you keep the window open. Change your name in settings!</div>
+                </div>
             </div>
         </div>
 
@@ -93,11 +103,11 @@
                 <div class="space-y-4">
                     <div>
                         <label class="block text-xs font-bold text-[#b5bac1] uppercase mb-2">Display Name</label>
-                        <input id="setting-username" type="text" class="w-full bg-[#1e1f22] p-2.5 rounded border-none outline-none focus:ring-2 focus:ring-[#5865f2]">
+                        <input id="setting-username" type="text" class="w-full bg-[#1e1f22] p-2.5 rounded border-none outline-none text-white focus:ring-2 focus:ring-[#5865f2]">
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-[#b5bac1] uppercase mb-2">PFP Seed (Randomizes Avatar)</label>
-                        <input id="setting-pfp" type="text" placeholder="Type anything to change avatar" class="w-full bg-[#1e1f22] p-2.5 rounded border-none outline-none focus:ring-2 focus:ring-[#5865f2]">
+                        <label class="block text-xs font-bold text-[#b5bac1] uppercase mb-2">PFP Seed (Type anything to change avatar)</label>
+                        <input id="setting-pfp-seed" type="text" placeholder="e.g. dragon, cool-guy, roblox" class="w-full bg-[#1e1f22] p-2.5 rounded border-none outline-none text-white focus:ring-2 focus:ring-[#5865f2]">
                     </div>
                 </div>
 
@@ -109,39 +119,11 @@
         </div>
     </div>
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Global Variables provided by the environment
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-            apiKey: "", // Placeholder for external hosting
-            authDomain: "",
-            projectId: "",
-            storageBucket: "",
-            messagingSenderId: "",
-            appId: ""
-        };
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'discord-clone-rblx-default';
-
-        // Initialize Firebase
-        let app, auth, db;
-        
-        try {
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-            startApp();
-        } catch (e) {
-            console.error("Firebase Initialization Error:", e);
-            document.getElementById('chat-messages').innerHTML = `<div class="text-center py-10 text-red-400 font-bold">Configuration Error: Please provide a valid Firebase Config to run outside of the editor.</div>`;
-        }
-
-        let currentUser = null;
+    <script>
+        // Use LocalStorage to save your profile on your own computer
         let userProfile = {
-            username: "Guest_" + Math.floor(Math.random() * 9000),
-            pfp: "https://api.dicebear.com/7.x/avataaars/svg?seed=" + Math.random()
+            username: localStorage.getItem('dc_username') || "Guest_" + Math.floor(Math.random() * 9999),
+            pfp: localStorage.getItem('dc_pfp') || "https://api.dicebear.com/7.x/avataaars/svg?seed=" + Math.random()
         };
 
         const chatContainer = document.getElementById('chat-messages');
@@ -150,124 +132,7 @@
         const footerPfp = document.getElementById('footer-pfp');
         const settingsModal = document.getElementById('settings-modal');
         const settingUsername = document.getElementById('setting-username');
-        const settingPfp = document.getElementById('setting-pfp');
-
-        async function startApp() {
-            // Rule 3: Auth Before Queries
-            const initAuth = async () => {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
-                } else {
-                    await signInAnonymously(auth);
-                }
-            };
-
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    currentUser = user;
-                    // Rule 1: Strict Paths
-                    const profilePath = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data');
-                    try {
-                        const userDoc = await getDoc(profilePath);
-                        if (userDoc.exists()) {
-                            userProfile = userDoc.data();
-                        } else {
-                            await setDoc(profilePath, userProfile);
-                        }
-                    } catch (err) {
-                        console.warn("Profile storage failed (likely rule permissions), using local session profile.");
-                    }
-                    updateUI();
-                    listenToMessages();
-                }
-            });
-
-            await initAuth();
-        }
-
-        function listenToMessages() {
-            // Rule 1 & Rule 2: Simple query, no complex filters
-            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'messages'));
-            onSnapshot(q, (snapshot) => {
-                const messages = [];
-                snapshot.forEach((doc) => messages.push({ id: doc.id, ...doc.data() }));
-                // Sort in memory (Rule 2)
-                messages.sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
-                renderMessages(messages);
-            }, (error) => {
-                console.error("Firestore error:", error);
-                chatContainer.innerHTML = `<div class="text-red-400 text-center p-4">Connection Error: Ensure you have initialized your Firebase DB and set rules correctly.</div>`;
-            });
-        }
-
-        function renderMessages(messages) {
-            chatContainer.innerHTML = '';
-            if (messages.length === 0) {
-                chatContainer.innerHTML = `<div class="text-center py-10 text-[#949ba4]">No messages yet. Be the first to say hi!</div>`;
-                return;
-            }
-            messages.forEach(msg => {
-                const msgEl = document.createElement('div');
-                msgEl.className = 'flex space-x-4 group hover:bg-[#2e3035] -mx-4 px-4 py-1 transition-colors';
-                msgEl.innerHTML = `
-                    <img src="${msg.pfp || 'https://api.dicebear.com/7.x/avataaars/svg?seed=fallback'}" class="w-10 h-10 rounded-full mt-1 flex-shrink-0 bg-[#1e1f22]">
-                    <div class="flex-1 overflow-hidden">
-                        <div class="flex items-center space-x-2">
-                            <span class="font-bold text-white hover:underline cursor-pointer">${msg.username || 'Unknown'}</span>
-                            <span class="text-[10px] text-[#949ba4] font-medium">${msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now'}</span>
-                        </div>
-                        <div class="text-[#dbdee1] leading-relaxed break-words">${msg.text}</div>
-                    </div>
-                `;
-                chatContainer.appendChild(msgEl);
-            });
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        chatInput.addEventListener('keypress', async (e) => {
-            if (e.key === 'Enter' && chatInput.value.trim() && currentUser && db) {
-                const text = chatInput.value;
-                chatInput.value = '';
-                try {
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), {
-                        text: text,
-                        userId: currentUser.uid,
-                        username: userProfile.username,
-                        pfp: userProfile.pfp,
-                        timestamp: serverTimestamp()
-                    });
-                } catch (err) {
-                    console.error("Error sending:", err);
-                }
-            }
-        });
-
-        window.toggleSettings = (show) => {
-            if (show) {
-                settingUsername.value = userProfile.username;
-                settingPfp.value = "";
-                settingsModal.classList.remove('hidden');
-            } else {
-                settingsModal.classList.add('hidden');
-            }
-        };
-
-        window.saveSettings = async () => {
-            if (!currentUser || !db) return;
-            const newName = settingUsername.value.trim() || userProfile.username;
-            const seed = settingPfp.value.trim();
-            const newPfp = seed ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}` : userProfile.pfp;
-            userProfile = { username: newName, pfp: newPfp };
-            
-            try {
-                await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'profile', 'data'), userProfile);
-            } catch (err) {
-                console.warn("Could not save profile to cloud.");
-            }
-            
-            updateUI();
-            toggleSettings(false);
-        };
+        const settingPfpSeed = document.getElementById('setting-pfp-seed');
 
         function updateUI() {
             footerUsername.innerText = userProfile.username;
@@ -275,6 +140,62 @@
             lucide.createIcons();
         }
 
+        function toggleSettings(show) {
+            if (show) {
+                settingUsername.value = userProfile.username;
+                settingPfpSeed.value = "";
+                settingsModal.classList.remove('hidden');
+            } else {
+                settingsModal.classList.add('hidden');
+            }
+        }
+
+        function saveSettings() {
+            const newName = settingUsername.value.trim();
+            const seed = settingPfpSeed.value.trim();
+            
+            if (newName) {
+                userProfile.username = newName;
+                localStorage.setItem('dc_username', newName);
+            }
+            
+            if (seed) {
+                const newPfp = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
+                userProfile.pfp = newPfp;
+                localStorage.setItem('dc_pfp', newPfp);
+            }
+            
+            updateUI();
+            toggleSettings(false);
+        }
+
+        function addMessage(username, pfp, text, isSystem = false) {
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const msgEl = document.createElement('div');
+            msgEl.className = 'flex space-x-4 group hover:bg-[#2e3035] -mx-4 px-4 py-1 transition-colors';
+            msgEl.innerHTML = `
+                <img src="${pfp}" class="w-10 h-10 rounded-full mt-1 flex-shrink-0 bg-[#1e1f22]">
+                <div class="flex-1 overflow-hidden">
+                    <div class="flex items-center space-x-2">
+                        <span class="font-bold ${isSystem ? 'text-[#5865f2]' : 'text-white'} hover:underline cursor-pointer">${username}</span>
+                        <span class="text-[10px] text-[#949ba4] font-medium">${time}</span>
+                    </div>
+                    <div class="text-[#dbdee1] leading-relaxed break-words">${text}</div>
+                </div>
+            `;
+            chatContainer.appendChild(msgEl);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && chatInput.value.trim()) {
+                addMessage(userProfile.username, userProfile.pfp, chatInput.value.trim());
+                chatInput.value = '';
+            }
+        });
+
+        // Initial setup
+        updateUI();
         lucide.createIcons();
     </script>
 </body>
