@@ -14,25 +14,9 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1b1e; border-radius: 4px; }
         .sidebar-icon { transition: all 0.2s; cursor: pointer; }
         .sidebar-icon:hover { border-radius: 16px; background-color: #5865f2; color: white; }
-        #error-overlay { display: none; }
     </style>
 </head>
 <body class="h-screen flex">
-
-    <!-- Configuration Error Overlay (For GitHub/External Hosting) -->
-    <div id="error-overlay" class="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4">
-        <div class="bg-[#313338] p-8 rounded-lg max-w-lg w-full border border-red-500/50">
-            <h2 class="text-red-500 text-xl font-bold mb-4">Firebase Configuration Missing</h2>
-            <p class="text-gray-300 mb-6 text-sm">
-                This app is currently missing a Firebase Configuration. If you are seeing this on GitHub, you need to edit the source code and paste your Firebase Config object into the <code>firebaseConfig</code> variable.
-            </p>
-            <div class="bg-black/50 p-4 rounded font-mono text-xs text-green-400 mb-6">
-                // Find this in index.html:<br>
-                const firebaseConfig = { ... };
-            </div>
-            <button onclick="document.getElementById('error-overlay').style.display='none'" class="w-full bg-[#5865f2] py-2 rounded font-bold">Try Anyway</button>
-        </div>
-    </div>
 
     <!-- Sidebar (Servers) -->
     <div class="w-18 bg-[#1e1f22] flex flex-col items-center py-3 space-y-2 flex-shrink-0">
@@ -130,31 +114,28 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- GITHUB SAFETY CHECK ---
-        let firebaseConfig;
-        try {
-            // Check if environment config exists
-            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        } catch (e) {
-            firebaseConfig = null;
-        }
+        // Global Variables provided by the environment
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "", // Placeholder for external hosting
+            authDomain: "",
+            projectId: "",
+            storageBucket: "",
+            messagingSenderId: "",
+            appId: ""
+        };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'discord-clone-rblx-default';
 
-        // IMPORTANT: If you upload to GitHub, replace this null with your own Firebase Config object!
-        if (!firebaseConfig) {
-            // Example of what your config should look like:
-            // firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... };
-            document.getElementById('error-overlay').style.display = 'flex';
-        }
-
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'discord-clone-rblx-prod';
-
-        // Initialize Firebase ONLY if config is present
+        // Initialize Firebase
         let app, auth, db;
-        if (firebaseConfig) {
+        
+        try {
             app = initializeApp(firebaseConfig);
             auth = getAuth(app);
             db = getFirestore(app);
             startApp();
+        } catch (e) {
+            console.error("Firebase Initialization Error:", e);
+            document.getElementById('chat-messages').innerHTML = `<div class="text-center py-10 text-red-400 font-bold">Configuration Error: Please provide a valid Firebase Config to run outside of the editor.</div>`;
         }
 
         let currentUser = null;
@@ -172,7 +153,7 @@
         const settingPfp = document.getElementById('setting-pfp');
 
         async function startApp() {
-            // Handle Authentication
+            // Rule 3: Auth Before Queries
             const initAuth = async () => {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
@@ -184,31 +165,38 @@
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     currentUser = user;
+                    // Rule 1: Strict Paths
                     const profilePath = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'data');
-                    const userDoc = await getDoc(profilePath);
-                    if (userDoc.exists()) {
-                        userProfile = userDoc.data();
-                    } else {
-                        await setDoc(profilePath, userProfile);
+                    try {
+                        const userDoc = await getDoc(profilePath);
+                        if (userDoc.exists()) {
+                            userProfile = userDoc.data();
+                        } else {
+                            await setDoc(profilePath, userProfile);
+                        }
+                    } catch (err) {
+                        console.warn("Profile storage failed (likely rule permissions), using local session profile.");
                     }
                     updateUI();
                     listenToMessages();
                 }
             });
 
-            initAuth();
+            await initAuth();
         }
 
         function listenToMessages() {
+            // Rule 1 & Rule 2: Simple query, no complex filters
             const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'messages'));
             onSnapshot(q, (snapshot) => {
                 const messages = [];
                 snapshot.forEach((doc) => messages.push({ id: doc.id, ...doc.data() }));
+                // Sort in memory (Rule 2)
                 messages.sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
                 renderMessages(messages);
             }, (error) => {
                 console.error("Firestore error:", error);
-                chatContainer.innerHTML = `<div class="text-red-400 text-center p-4">Connection Error: Ensure your Firebase rules allow access to the specified paths.</div>`;
+                chatContainer.innerHTML = `<div class="text-red-400 text-center p-4">Connection Error: Ensure you have initialized your Firebase DB and set rules correctly.</div>`;
             });
         }
 
@@ -270,7 +258,13 @@
             const seed = settingPfp.value.trim();
             const newPfp = seed ? `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}` : userProfile.pfp;
             userProfile = { username: newName, pfp: newPfp };
-            await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'profile', 'data'), userProfile);
+            
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'profile', 'data'), userProfile);
+            } catch (err) {
+                console.warn("Could not save profile to cloud.");
+            }
+            
             updateUI();
             toggleSettings(false);
         };
